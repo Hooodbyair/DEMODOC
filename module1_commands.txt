@@ -1,0 +1,209 @@
+
+### Модуль 1: Настройка устройств
+
+---
+#### ISP
+1. Переход в режим суперпользователя:
+   sudo -i
+
+2. Настройка имени устройства:
+   hostnamectl set-hostname isp.au-team.irpo
+
+3. Настройка адресации:
+   mcedit /etc/network/interfaces
+   # Добавить:
+   iface eth0 inet dhcp
+   iface eth1 inet static
+       address 172.16.4.1
+       netmask 255.255.255.240
+   iface eth2 inet static
+       address 172.16.5.1
+       netmask 255.255.255.240
+
+4. Перезапуск сети:
+   systemctl restart networking
+
+5. Включение маршрутизации:
+   mcedit /etc/sysctl.conf
+   # Убрать комментарий:
+   net.ipv4.ip_forward=1
+   sysctl -p
+
+6. Настройка NAT:
+   iptables -t nat -A POSTROUTING -s 172.16.4.0/28 -o eth0 -j MASQUERADE
+   iptables -t nat -A POSTROUTING -s 172.16.5.0/28 -o eth0 -j MASQUERADE
+   iptables-save > /root/rules
+   export EDITOR=mcedit
+   crontab -e
+   @reboot /sbin/iptables-restore < /root/rules
+
+---
+#### HQ-RTR
+1. Переход в режим суперпользователя:
+   sudo -i
+
+2. Настройка имени устройства:
+   hostnamectl set-hostname hq-rtr.au-team.irpo
+
+3. Настройка адресации:
+   mcedit /etc/network/interfaces
+   # Добавить:
+   iface eth0 inet static
+       address 172.16.4.2
+       netmask 255.255.255.240
+       gateway 172.16.4.1
+   iface eth1 inet manual
+   iface eth1.100 inet static
+       address 192.168.1.1
+       netmask 255.255.255.192
+   iface eth1.200 inet static
+       address 192.168.2.1
+       netmask 255.255.255.240
+   iface eth1.999 inet static
+       address 192.168.3.1
+       netmask 255.255.255.248
+
+4. Перезапуск сети:
+   systemctl restart networking
+
+5. Настройка GRE-туннеля:
+   mcedit /etc/network/interfaces
+   # Добавить:
+   auto gre1
+   iface gre1 inet static
+       address 10.10.10.1
+       netmask 255.255.255.252
+       local 172.16.4.2
+       endpoint 172.16.5.2
+       ttl 255
+   systemctl restart networking
+   ip a
+
+6. Настройка NAT:
+   iptables -t nat -A POSTROUTING -s 192.168.1.0/26 -o eth0 -j MASQUERADE
+   iptables -t nat -A POSTROUTING -s 192.168.2.0/28 -o eth0 -j MASQUERADE
+   iptables -t nat -A POSTROUTING -s 192.168.3.0/29 -o eth0 -j MASQUERADE
+   iptables-save > /root/rules
+   crontab -e
+   @reboot /sbin/iptables-restore < /root/rules
+
+7. Настройка OSPF:
+   apt install frr
+   mcedit /etc/frr/daemons
+   # Изменить строку:
+   ospfd=yes
+   systemctl restart frr
+   vtysh
+   conf t
+   router ospf
+   network 10.10.10.0/30 area 0
+   network 192.168.1.0/26 area 0
+   network 192.168.2.0/28 area 0
+   network 192.168.3.0/29 area 0
+   int gre1
+   ip ospf authentication message-digest
+   ip ospf message-digest-key 1 md5 P@ssw0rd
+   do wr mem
+
+---
+#### BR-RTR
+1. Переход в режим суперпользователя:
+   sudo -i
+
+2. Настройка имени устройства:
+   hostnamectl set-hostname br-rtr.au-team.irpo
+
+3. Настройка адресации:
+   mcedit /etc/network/interfaces
+   # Добавить:
+   iface eth0 inet static
+       address 172.16.5.2
+       netmask 255.255.255.240
+       gateway 172.16.5.1
+   iface eth1 inet static
+       address 192.168.4.1
+       netmask 255.255.255.224
+
+4. Перезапуск сети:
+   systemctl restart networking
+
+5. Настройка GRE-туннеля:
+   mcedit /etc/network/interfaces
+   # Добавить:
+   auto gre1
+   iface gre1 inet static
+       address 10.10.10.2
+       netmask 255.255.255.252
+       local 172.16.5.2
+       endpoint 172.16.4.2
+       ttl 255
+   systemctl restart networking
+   ip a
+   ping 10.10.10.1
+
+6. Настройка NAT:
+   iptables -t nat -A POSTROUTING -s 192.168.4.0/27 -o eth0 -j MASQUERADE
+   iptables-save > /root/rules
+   crontab -e
+   @reboot /sbin/iptables-restore < /root/rules
+
+7. Настройка OSPF:
+   apt install frr
+   mcedit /etc/frr/daemons
+   # Изменить строку:
+   ospfd=yes
+   systemctl restart frr
+   vtysh
+   conf t
+   router ospf
+   network 10.10.10.0/30 area 0
+   network 192.168.4.0/27 area 0
+   int gre1
+   ip ospf authentication message-digest
+   ip ospf message-digest-key 1 md5 P@ssw0rd
+   do wr mem
+
+---
+#### HQ-SRV
+1. Переход в режим суперпользователя:
+   sudo -i
+
+2. Настройка имени устройства:
+   hostnamectl set-hostname hq-srv.au-team.irpo
+
+3. Настройка VLAN 100:
+   mkdir /etc/net/ifaces/enp0s3.100
+   mcedit /etc/net/ifaces/enp0s3.100/options
+   # Заполнить:
+   TYPE=vlan
+   HOST=enp0s3
+   VID=100
+   DISABLED=no
+   BOOTPROTO=static
+   mcedit /etc/net/ifaces/enp0s3.100/ipv4address
+   192.168.1.2/26
+   mcedit /etc/net/ifaces/enp0s3.100/ipv4route
+   default via 192.168.1.1
+   systemctl restart network
+
+---
+#### BR-SRV
+1. Переход в режим суперпользователя:
+   sudo -i
+
+2. Настройка имени устройства:
+   hostnamectl set-hostname br-srv.au-team.irpo
+
+3. Настройка адресации:
+   cd /etc/net/ifaces/enp0s3
+   mcedit options
+   # Заполнить:
+   TYPE=eth
+   DISABLED=no
+   BOOTPROTO=static
+   NM_CONTROLLED=no
+   mcedit ipv4address
+   192.168.4.2/27
+   mcedit ipv4route
+   default via 192.168.4.1
+   systemctl restart network
